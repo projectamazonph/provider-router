@@ -38,11 +38,7 @@
       }
 
       function apiPost(path, body) {
-        return fetch(API_BASE + path, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(body || {}),
-        }).then(function (r) { return r.json(); });
+        return api.fetchJSON(API_BASE + path, { method: "POST", body: body || {} });
       }
 
       // ─── Status Badge ─────────────────────────────────────────────────────────
