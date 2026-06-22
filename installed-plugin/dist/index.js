@@ -9,376 +9,286 @@
 (function () {
   "use strict";
 
-  try {
+  // Self-executing function that waits for SDK then initializes
+  function initPlugin() {
     var SDK = window.__HERMES_PLUGIN_SDK__;
     if (!SDK) {
-      console.error("[provider-router] SDK not available, waiting...");
-      setTimeout(function() {
-        if (window.__HERMES_PLUGIN_SDK__) {
-          console.log("[provider-router] SDK now available, retrying...");
-          // Re-trigger script load
-          var script = document.querySelector('script[data-hermes-plugin="provider-router"]');
-          if (script) script.onload();
-        }
-      }, 500);
+      console.warn("[provider-router] SDK not ready, retrying in 200ms...");
+      setTimeout(initPlugin, 200);
       return;
     }
 
-    var React = SDK.React;
-    var h = React.createElement;
-    var hooks = SDK.hooks;
-    var useState = hooks.useState;
-    var useEffect = hooks.useEffect;
-    var useCallback = hooks.useCallback;
-    var components = SDK.components;
-    var utils = SDK.utils;
-    var api = SDK.api;
-    var useI18n = SDK.useI18n || function () { return { t: {}, locale: "en" }; };
+    console.log("[provider-router] SDK found, initializing...");
 
-    var API_BASE = "/api/plugins/provider-router";
+    try {
+      var React = SDK.React;
+      var h = React.createElement;
+      var hooks = SDK.hooks;
+      var useState = hooks.useState;
+      var useEffect = hooks.useEffect;
+      var useCallback = hooks.useCallback;
+      var api = SDK.api;
 
-    console.log("[provider-router] SDK loaded, initializing plugin...");
+      var API_BASE = "/api/plugins/provider-router";
 
-    // ─── API Client ───────────────────────────────────────────────────────────
+      // ─── API ───────────────────────────────────────────────────────────────────
 
-    function apiGet(path) {
-      return api.fetchJSON(API_BASE + path);
-    }
+      function apiGet(path) {
+        return api.fetchJSON(API_BASE + path);
+      }
 
-    function apiPost(path, body) {
-      if (body === undefined) body = {};
-      return fetch(API_BASE + path, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      }).then(function (res) {
-        if (!res.ok) throw new Error("API error: " + res.status);
-        return res.json();
-      });
-    }
+      function apiPost(path, body) {
+        return fetch(API_BASE + path, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body || {}),
+        }).then(function (r) { return r.json(); });
+      }
 
-    // ─── Helpers ──────────────────────────────────────────────────────────────
+      // ─── Status Badge ─────────────────────────────────────────────────────────
 
-    function statusColor(status) {
-      var map = { active: "#22c55e", rate_limited: "#f59e0b", exhausted: "#ef4444", error: "#ef4444", offline: "#6b7280" };
-      return map[status] || "#6b7280";
-    }
+      function StatusBadge(props) {
+        var color = { active: "#22c55e", rate_limited: "#f59e0b", exhausted: "#ef4444", error: "#ef4444", offline: "#6b7280" }[props.status] || "#6b7280";
+        return h("span", { className: "inline-block px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wide text-white", style: { background: color } }, props.status);
+      }
 
-    function StatusBadge(props) {
-      return h("span", {
-        style: {
-          display: "inline-block", padding: "2px 8px", borderRadius: "12px",
-          fontSize: "11px", fontWeight: 600, color: "#fff",
-          background: statusColor(props.status), textTransform: "uppercase", letterSpacing: "0.5px",
-        }
-      }, props.status);
-    }
+      // ─── Stat Card ─────────────────────────────────────────────────────────────
 
-    function StatCard(props) {
-      return h("div", {
-        style: { background: "var(--surface-elevated, #1a1a2e)", borderRadius: "12px", padding: "16px", textAlign: "center" }
-      },
-        h("div", { style: { fontSize: "24px", fontWeight: 700, color: props.color } }, props.value),
-        h("div", { style: { fontSize: "12px", color: "var(--text-secondary)" } }, props.label)
-      );
-    }
+      function StatCard(props) {
+        return h("div", { className: "rounded-xl p-3 text-center", style: { background: "var(--surface-elevated, #1a1a2e)" } },
+          h("div", { className: "text-xl font-bold", style: { color: props.color } }, props.value),
+          h("div", { className: "text-[10px] text-[var(--text-secondary)]" }, props.label)
+        );
+      }
 
-    function statItem(label, value) {
-      return h("div", null,
-        h("div", { style: { color: "var(--text-secondary)", fontSize: "11px", marginBottom: "2px" } }, label),
-        h("div", { style: { fontWeight: 600, fontFamily: "monospace", fontSize: "13px" } }, value)
-      );
-    }
+      // ─── Provider Card ────────────────────────────────────────────────────────
 
-    // ─── Provider Card ────────────────────────────────────────────────────────
+      function ProviderCard(props) {
+        var name = props.name, data = props.data;
+        var state = data.state || {};
+        var creds = data.credentials || {};
+        var ok = state.is_available;
 
-    function ProviderCard(props) {
-      var name = props.name, data = props.data;
-      var state = data.state || {};
-      var creds = data.credentials || {};
-      var isAvailable = state.is_available;
-
-      return h("div", {
-        style: {
-          background: "var(--surface-elevated, #1a1a2e)", borderRadius: "12px",
-          padding: "16px", marginBottom: "12px",
-          border: "1px solid " + (isAvailable ? "rgba(34,197,94,0.2)" : "rgba(239,68,68,0.2)"),
-        }
-      },
-        h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" } },
-          h("div", null,
-            h("h3", { style: { margin: 0, fontSize: "16px", fontWeight: 600 } }, name),
-            h("div", { style: { fontSize: "12px", color: "var(--text-secondary)", marginTop: "2px" } }, state.model || "No model set")
+        return h("div", { className: "rounded-xl p-4 mb-3", style: { background: "var(--surface-elevated, #1a1a2e)", border: "1px solid " + (ok ? "rgba(34,197,94,0.2)" : "rgba(239,68,68,0.2)") } },
+          h("div", { className: "flex justify-between items-center mb-3" },
+            h("div", null,
+              h("h3", { className: "text-sm font-semibold m-0" }, name),
+              h("div", { className: "text-[11px] text-[var(--text-secondary)] mt-0.5" }, state.model || "No model")
+            ),
+            h(StatusBadge, { status: state.status })
           ),
-          h(StatusBadge, { status: state.status })
-        ),
-        h("div", { style: { display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "12px", fontSize: "13px" } },
-          statItem("Tokens In", (state.tokens_in || 0).toLocaleString()),
-          statItem("Tokens Out", (state.tokens_out || 0).toLocaleString()),
-          statItem("Total Cost", "$" + (state.total_cost || 0).toFixed(4)),
-          statItem("Credentials",
-            h("span", null,
-              h("span", { style: { color: "#22c55e" } }, creds.active || 0),
-              "/",
-              creds.total || 0,
-              (creds.exhausted > 0) ? h("span", { style: { color: "#ef4444", marginLeft: "4px" } }, "(" + creds.exhausted + " exhausted)") : null
+          h("div", { className: "grid grid-cols-3 gap-3 text-xs" },
+            h(Stat, { label: "Tokens In", value: (state.tokens_in || 0).toLocaleString() }),
+            h(Stat, { label: "Tokens Out", value: (state.tokens_out || 0).toLocaleString() }),
+            h(Stat, { label: "Cost", value: "$" + (state.total_cost || 0).toFixed(4) }),
+            h(Stat, { label: "Creds", value: (creds.active || 0) + "/" + (creds.total || 0) + (creds.exhausted ? " (" + creds.exhausted + " ex)" : "") }),
+            h(Stat, { label: "Errors", value: ((state.error_rate || 0) * 100).toFixed(1) + "%" }),
+            h(Stat, { label: "Latency", value: (state.avg_latency_ms || 0).toFixed(0) + "ms" })
+          ),
+          state.last_error
+            ? h("div", { className: "mt-2 p-2 rounded text-[11px] font-mono", style: { background: "rgba(239,68,68,0.1)", color: "#fca5a5" } }, "Error: " + state.last_error)
+            : null
+        );
+      }
+
+      function Stat(props) {
+        return h("div", null,
+          h("div", { className: "text-[var(--text-secondary)] text-[10px] mb-0.5" }, props.label),
+          h("div", { className: "font-semibold font-mono text-xs" }, props.value)
+        );
+      }
+
+      // ─── Local LLM ────────────────────────────────────────────────────────────
+
+      function LocalLLM(props) {
+        var s = props.status;
+        return h("div", { className: "rounded-xl p-4 mb-3", style: { background: "var(--surface-elevated, #1a1a2e)" } },
+          h("div", { className: "flex justify-between items-center mb-3" },
+            h("h3", { className: "text-sm font-semibold m-0" }, "Local LLM"),
+            h(StatusBadge, { status: s.running ? "active" : "offline" })
+          ),
+          h("div", { className: "text-xs text-[var(--text-secondary)] mb-3" },
+            h("div", null, "Server: ", h("code", null, s.url)),
+            h("div", null, "Model: ", h("code", null, s.model_name)),
+            h("div", null, "Recommended: ", h("code", { style: { color: "#22c55e" } }, s.recommended_model))
+          ),
+          h("button", {
+            onClick: s.running ? props.onStop : props.onStart,
+            className: "px-4 py-2 rounded text-xs font-semibold text-white cursor-pointer",
+            style: { background: s.running ? "#ef4444" : "#22c55e", border: "none" }
+          }, s.running ? "Stop Server" : "Start Server")
+        );
+      }
+
+      // ─── Notifications ────────────────────────────────────────────────────────
+
+      function NotifLog(props) {
+        var n = props.notifications || [];
+        if (!n.length) return h("div", { className: "p-5 text-center text-[var(--text-secondary)] text-xs" }, "No notifications");
+        return h("div", { className: "max-h-96 overflow-y-auto" },
+          n.slice().reverse().map(function (item, i) {
+            return h("div", { key: i, className: "px-3 py-2 border-b border-[var(--border)] text-xs" },
+              h("div", { className: "flex justify-between mb-1" },
+                h("span", { className: "font-semibold", style: { color: item.severity === "critical" ? "#ef4444" : item.severity === "warning" ? "#f59e0b" : "inherit" } }, item.type),
+                h("span", { className: "text-[var(--text-secondary)] text-[10px]" }, new Date(item.timestamp).toLocaleString())
+              ),
+              h("div", { className: "text-[var(--text-secondary)]" }, item.message)
+            );
+          })
+        );
+      }
+
+      // ─── Settings ─────────────────────────────────────────────────────────────
+
+      function Settings(props) {
+        var cfg = props.config;
+        var _s1 = useState(cfg.strategy || "priority"), strat = _s1[0], setStrat = _s1[1];
+        var _s2 = useState(cfg.auto_switch !== false), auto = _s2[0], setAuto = _s2[1];
+        var _s3 = useState(cfg.rate_limit_cooldown_seconds || 60), cool = _s3[0], setCool = _s3[1];
+
+        return h("div", { className: "rounded-xl p-4 mb-3", style: { background: "var(--surface-elevated, #1a1a2e)" } },
+          h("h3", { className: "text-sm font-semibold mb-4 m-0" }, "Settings"),
+
+          h("div", { className: "mb-4" },
+            h("label", { className: "text-xs text-[var(--text-secondary)] block mb-1.5" }, "Rotation Strategy"),
+            h("select", { value: strat, onChange: function (e) { setStrat(e.target.value); }, className: "w-full px-3 py-2 rounded border border-[var(--border)] bg-[var(--surface)] text-sm", style: { color: "var(--text-primary)" } },
+              h("option", { value: "priority" }, "Priority"),
+              h("option", { value: "cost_first" }, "Cost First"),
+              h("option", { value: "reliability_first" }, "Reliability First"),
+              h("option", { value: "round_robin" }, "Round Robin")
             )
           ),
-          statItem("Error Rate", ((state.error_rate || 0) * 100).toFixed(1) + "%"),
-          statItem("Latency", (state.avg_latency_ms || 0).toFixed(0) + "ms")
-        ),
-        state.last_error
-          ? h("div", {
-              style: { marginTop: "8px", padding: "8px", background: "rgba(239,68,68,0.1)", borderRadius: "6px", fontSize: "12px", color: "#fca5a5", fontFamily: "monospace" }
-            }, "Last error: " + state.last_error)
-          : null
-      );
-    }
 
-    // ─── Local LLM Section ────────────────────────────────────────────────────
+          h("div", { className: "mb-4" },
+            h("label", { className: "flex items-center gap-2 text-xs cursor-pointer" },
+              h("input", { type: "checkbox", checked: auto, onChange: function (e) { setAuto(e.target.checked); } }),
+              "Auto-switch on failure"
+            )
+          ),
 
-    function LocalLLMSection(props) {
-      var status = props.status, onStart = props.onStart, onStop = props.onStop;
-      var running = status.running;
+          h("div", { className: "mb-4" },
+            h("label", { className: "text-xs text-[var(--text-secondary)] block mb-1.5" }, "Rate Limit Cooldown (s)"),
+            h("input", { type: "number", value: cool, onChange: function (e) { setCool(parseInt(e.target.value) || 60); }, min: 10, max: 3600, className: "w-full px-3 py-2 rounded border border-[var(--border)] bg-[var(--surface)] text-sm", style: { color: "var(--text-primary)" } })
+          ),
 
-      return h("div", { style: { background: "var(--surface-elevated, #1a1a2e)", borderRadius: "12px", padding: "16px", marginBottom: "12px" } },
-        h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" } },
-          h("h3", { style: { margin: 0, fontSize: "16px", fontWeight: 600 } }, "Local LLM Fallback"),
-          h(StatusBadge, { status: running ? "active" : "offline" })
-        ),
-        h("div", { style: { fontSize: "13px", color: "var(--text-secondary)", marginBottom: "12px" } },
-          h("div", null, "Server: ", h("code", { style: { color: "var(--text-primary)" } }, status.url)),
-          h("div", null, "Model: ", h("code", { style: { color: "var(--text-primary)" } }, status.model_name)),
-          h("div", null, "Recommended: ", h("code", { style: { color: "#22c55e" } }, status.recommended_model))
-        ),
-        h("div", { style: { display: "flex", gap: "8px" } },
-          !running
-            ? h("button", { onClick: onStart, style: { padding: "8px 16px", borderRadius: "6px", border: "none", background: "#22c55e", color: "#fff", fontSize: "13px", fontWeight: 600, cursor: "pointer" } }, "Start Server")
-            : h("button", { onClick: onStop, style: { padding: "8px 16px", borderRadius: "6px", border: "none", background: "#ef4444", color: "#fff", fontSize: "13px", fontWeight: 600, cursor: "pointer" } }, "Stop Server")
-        )
-      );
-    }
-
-    // ─── Notification Log ─────────────────────────────────────────────────────
-
-    function NotificationLog(props) {
-      var notifications = props.notifications || [];
-      if (notifications.length === 0) {
-        return h("div", { style: { padding: "20px", textAlign: "center", color: "var(--text-secondary)", fontSize: "13px" } }, "No notifications yet");
+          h("button", {
+            onClick: function () { onSave(Object.assign({}, cfg, { strategy: strat, auto_switch: auto, rate_limit_cooldown_seconds: cool })); },
+            className: "px-4 py-2 rounded text-xs font-semibold text-white cursor-pointer",
+            style: { background: "#3b82f6", border: "none" }
+          }, "Save")
+        );
       }
-      return h("div", { style: { maxHeight: "400px", overflowY: "auto" } },
-        notifications.slice().reverse().map(function (n, i) {
-          return h("div", { key: i, style: { padding: "10px 12px", borderBottom: "1px solid var(--border)", fontSize: "13px" } },
-            h("div", { style: { display: "flex", justifyContent: "space-between", marginBottom: "4px" } },
-              h("span", { style: { fontWeight: 600, color: n.severity === "critical" ? "#ef4444" : n.severity === "warning" ? "#f59e0b" : "var(--text-primary)" } }, n.type),
-              h("span", { style: { color: "var(--text-secondary)", fontSize: "11px" } }, new Date(n.timestamp).toLocaleString())
+
+      // ─── Main Component ───────────────────────────────────────────────────────
+
+      function ProviderRouterDashboard() {
+        var _tab = useState("dashboard"), activeTab = _tab[0], setTab = _tab[1];
+        var _st = useState(null), status = _st[0], setStatus = _st[1];
+        var _ld = useState(true), loading = _ld[0], setLoading = _ld[1];
+        var _err = useState(null), error = _err[0], setError = _err[1];
+
+        var fetchStatus = useCallback(function () {
+          apiGet("/status").then(function (d) { setStatus(d); setError(null); }).catch(function (e) { setError(e.message); }).finally(function () { setLoading(false); });
+        }, []);
+
+        useEffect(function () { fetchStatus(); var i = setInterval(fetchStatus, 15000); return function () { clearInterval(i); }; }, [fetchStatus]);
+
+        if (loading) return h("div", { className: "flex items-center justify-center h-48 text-[var(--text-secondary)] text-sm" }, "Loading...");
+        if (error) return h("div", { className: "p-5 text-center" }, h("div", { className: "text-red-500 mb-2" }, "Error: " + error), h("button", { onClick: fetchStatus, className: "px-4 py-2 bg-blue-500 text-white rounded text-xs" }, "Retry"));
+
+        var providers = (status && status.providers) || {};
+        var notifications = (status && status.notifications) || [];
+        var config = (status && status.config) || {};
+        var local = {
+          running: status ? status.local_server_running : false,
+          url: "http://127.0.0.1:" + (config.local_server_port || 8080) + "/v1",
+          model_name: config.local_model_name || "local/llama-3.2-3b-instruct",
+          recommended_model: status ? status.recommended_model : "Llama-3.2-3B-Instruct-Q4_K_M.gguf",
+        };
+
+        var provCount = Object.keys(providers).length;
+        var availCount = Object.values(providers).filter(function (p) { return p.state && p.state.is_available; }).length;
+
+        var tabs = [
+          { id: "dashboard", label: "Dashboard" },
+          { id: "settings", label: "Settings" },
+          { id: "logs", label: "Logs" },
+        ];
+
+        return h("div", { className: "p-4 max-w-4xl mx-auto" },
+          // Stats
+          h("div", { className: "grid grid-cols-4 gap-2 mb-4" },
+            h(StatCard, { value: provCount, label: "Providers", color: "#3b82f6" }),
+            h(StatCard, { value: availCount, label: "Available", color: "#22c55e" }),
+            h(StatCard, { value: (status && status.active_provider) || "—", label: "Active", color: "#f59e0b" }),
+            h(StatCard, { value: local.running ? "OK" : "Off", label: "Local LLM", color: local.running ? "#22c55e" : "#6b7280" })
+          ),
+
+          // Local LLM
+          h(LocalLLM, {
+            status: local,
+            onStart: function () { apiPost("/local/start").then(fetchStatus); },
+            onStop: function () { apiPost("/local/stop").then(fetchStatus); }
+          }),
+
+          // Tabs
+          h("div", { className: "flex gap-1 mb-4 border-b border-[var(--border)]" },
+            tabs.map(function (t) {
+              return h("button", {
+                key: t.id,
+                onClick: function () { setTab(t.id); },
+                className: "px-4 py-2 text-xs font-medium rounded-t-lg cursor-pointer",
+                style: {
+                  background: activeTab === t.id ? "var(--surface-elevated, #1a1a2e)" : "transparent",
+                  color: activeTab === t.id ? "var(--text-primary)" : "var(--text-secondary)",
+                  borderBottom: activeTab === t.id ? "2px solid #3b82f6" : "2px solid transparent",
+                  border: "none",
+                  borderBottomWidth: "2px",
+                  borderBottomStyle: "solid",
+                  borderBottomColor: activeTab === t.id ? "#3b82f6" : "transparent",
+                }
+              }, t.label);
+            })
+          ),
+
+          // Content
+          activeTab === "dashboard" && h("div", null,
+            h("div", { className: "flex gap-2 mb-3" },
+              h("button", { onClick: function () { apiPost("/rotate").then(fetchStatus); }, className: "px-3 py-1.5 rounded border border-[var(--border)] bg-[var(--surface)] text-[var(--text-primary)] text-xs cursor-pointer" }, "Rotate"),
+              h("button", { onClick: fetchStatus, className: "px-3 py-1.5 rounded border border-[var(--border)] bg-[var(--surface)] text-[var(--text-primary)] text-xs cursor-pointer" }, "Refresh")
             ),
-            h("div", { style: { color: "var(--text-secondary)" } }, n.message)
-          );
-        })
-      );
-    }
-
-    // ─── Settings Panel ───────────────────────────────────────────────────────
-
-    function SettingsPanel(props) {
-      var config = props.config, onSave = props.onSave;
-      var stratState = useState(config.strategy || "priority");
-      var strategy = stratState[0], setStrategy = stratState[1];
-      var autoState = useState(config.auto_switch !== false);
-      var autoSwitch = autoState[0], setAutoSwitch = autoState[1];
-      var coolState = useState(config.rate_limit_cooldown_seconds || 60);
-      var cooldown = coolState[0], setCooldown = coolState[1];
-
-      return h("div", { style: { background: "var(--surface-elevated, #1a1a2e)", borderRadius: "12px", padding: "16px", marginBottom: "12px" } },
-        h("h3", { style: { margin: "0 0 16px 0", fontSize: "16px", fontWeight: 600 } }, "Settings"),
-
-        h("div", { style: { marginBottom: "16px" } },
-          h("label", { style: { fontSize: "13px", color: "var(--text-secondary)", display: "block", marginBottom: "6px" } }, "Rotation Strategy"),
-          h("select", { value: strategy, onChange: function (e) { setStrategy(e.target.value); }, style: { width: "100%", padding: "8px 12px", borderRadius: "6px", border: "1px solid var(--border)", background: "var(--surface)", color: "var(--text-primary)", fontSize: "13px" } },
-            h("option", { value: "priority" }, "Priority (ordered list)"),
-            h("option", { value: "cost_first" }, "Cost First (cheapest)"),
-            h("option", { value: "reliability_first" }, "Reliability First"),
-            h("option", { value: "round_robin" }, "Round Robin")
-          )
-        ),
-
-        h("div", { style: { marginBottom: "16px" } },
-          h("label", { style: { display: "flex", alignItems: "center", gap: "8px", fontSize: "13px", cursor: "pointer" } },
-            h("input", { type: "checkbox", checked: autoSwitch, onChange: function (e) { setAutoSwitch(e.target.checked); } }),
-            "Auto-switch on provider failure"
-          )
-        ),
-
-        h("div", { style: { marginBottom: "16px" } },
-          h("label", { style: { fontSize: "13px", color: "var(--text-secondary)", display: "block", marginBottom: "6px" } }, "Rate Limit Cooldown (seconds)"),
-          h("input", { type: "number", value: cooldown, onChange: function (e) { setCooldown(parseInt(e.target.value) || 60); }, min: 10, max: 3600, style: { width: "100%", padding: "8px 12px", borderRadius: "6px", border: "1px solid var(--border)", background: "var(--surface)", color: "var(--text-primary)", fontSize: "13px" } })
-        ),
-
-        h("button", {
-          onClick: function () {
-            onSave(Object.assign({}, config, { strategy: strategy, auto_switch: autoSwitch, rate_limit_cooldown_seconds: cooldown }));
-          },
-          style: { padding: "8px 16px", borderRadius: "6px", border: "none", background: "#3b82f6", color: "#fff", fontSize: "13px", fontWeight: 600, cursor: "pointer" }
-        }, "Save Settings")
-      );
-    }
-
-    // ─── Main Dashboard Component ─────────────────────────────────────────────
-
-    function ProviderRouterDashboard() {
-      var tabState = useState("dashboard");
-      var activeTab = tabState[0], setActiveTab = tabState[1];
-      var statusState = useState(null);
-      var status = statusState[0], setStatus = statusState[1];
-      var loadingState = useState(true);
-      var loading = loadingState[0], setLoading = loadingState[1];
-      var errorState = useState(null);
-      var error = errorState[0], setError = errorState[1];
-
-      var fetchStatus = useCallback(function () {
-        apiGet("/status").then(function (data) {
-          setStatus(data);
-          setError(null);
-        }).catch(function (e) {
-          setError(e.message);
-        }).finally(function () {
-          setLoading(false);
-        });
-      }, []);
-
-      useEffect(function () {
-        fetchStatus();
-        var interval = setInterval(fetchStatus, 15000);
-        return function () { clearInterval(interval); };
-      }, [fetchStatus]);
-
-      var handleStartLocal = useCallback(function () {
-        apiPost("/local/start").then(fetchStatus).catch(function (e) { alert("Failed to start: " + e.message); });
-      }, [fetchStatus]);
-
-      var handleStopLocal = useCallback(function () {
-        apiPost("/local/stop").then(fetchStatus).catch(function (e) { alert("Failed to stop: " + e.message); });
-      }, [fetchStatus]);
-
-      var handleRotate = useCallback(function () {
-        apiPost("/rotate").then(fetchStatus).catch(function (e) { alert("Rotation failed: " + e.message); });
-      }, [fetchStatus]);
-
-      var handleSaveConfig = useCallback(function (newConfig) {
-        apiPost("/config", newConfig).then(fetchStatus).catch(function (e) { alert("Failed to save: " + e.message); });
-      }, [fetchStatus]);
-
-      var handleClearNotifications = useCallback(function () {
-        apiPost("/notifications/clear").then(fetchStatus);
-      }, [fetchStatus]);
-
-      if (loading) {
-        return h("div", { style: { display: "flex", alignItems: "center", justifyContent: "center", height: "300px", color: "var(--text-secondary)" } }, "Loading provider status...");
-      }
-
-      if (error) {
-        return h("div", { style: { padding: "20px", textAlign: "center" } },
-          h("div", { style: { color: "#ef4444", marginBottom: "12px" } }, "Error: " + error),
-          h("button", { onClick: fetchStatus, style: { padding: "8px 16px", borderRadius: "6px", border: "none", background: "#3b82f6", color: "#fff", cursor: "pointer" } }, "Retry")
-        );
-      }
-
-      var providers = (status && status.providers) ? status.providers : {};
-      var notifications = (status && status.notifications) ? status.notifications : [];
-      var config = (status && status.config) ? status.config : {};
-      var localStatus = {
-        running: status ? status.local_server_running : false,
-        url: "http://127.0.0.1:" + (config.local_server_port || 8080) + "/v1",
-        model_path: config.local_model_path || "",
-        model_name: config.local_model_name || "local/llama-3.2-3b-instruct",
-        recommended_model: status ? status.recommended_model : "Llama-3.2-3B-Instruct-Q4_K_M.gguf",
-      };
-
-      var providerCount = Object.keys(providers).length;
-      var availableCount = Object.values(providers).filter(function (p) { return p.state && p.state.is_available; }).length;
-      var activeProvider = status ? status.active_provider : "—";
-
-      var tabs = [
-        { id: "dashboard", label: "Dashboard" },
-        { id: "settings", label: "Settings" },
-        { id: "logs", label: "Logs" },
-      ];
-
-      function renderDashboard() {
-        return h("div", null,
-          h("div", { style: { display: "flex", gap: "8px", marginBottom: "16px" } },
-            h("button", { onClick: handleRotate, style: { padding: "6px 12px", borderRadius: "6px", border: "1px solid var(--border)", background: "var(--surface)", color: "var(--text-primary)", fontSize: "12px", cursor: "pointer" } }, "Force Rotate"),
-            h("button", { onClick: fetchStatus, style: { padding: "6px 12px", borderRadius: "6px", border: "1px solid var(--border)", background: "var(--surface)", color: "var(--text-primary)", fontSize: "12px", cursor: "pointer" } }, "Refresh")
+            h("h4", { className: "text-xs font-semibold mb-2" }, "Providers"),
+            Object.entries(providers).map(function (e) { return h(ProviderCard, { key: e[0], name: e[0], data: e[1] }); })
           ),
-          h(LocalLLMSection, { status: localStatus, onStart: handleStartLocal, onStop: handleStopLocal }),
-          h("h4", { style: { fontSize: "14px", fontWeight: 600, margin: "16px 0 8px" } }, "Providers"),
-          Object.entries(providers).map(function (entry) {
-            return h(ProviderCard, { key: entry[0], name: entry[0], data: entry[1] });
-          })
-        );
-      }
 
-      function renderSettings() {
-        return h(SettingsPanel, { config: config, onSave: handleSaveConfig });
-      }
+          activeTab === "settings" && h(Settings, { config: config, onSave: function (c) { apiPost("/config", c).then(fetchStatus); } }),
 
-      function renderLogs() {
-        return h("div", null,
-          h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" } },
-            h("h4", { style: { margin: 0, fontSize: "14px", fontWeight: 600 } }, "Notifications (" + notifications.length + ")"),
-            h("button", { onClick: handleClearNotifications, style: { padding: "4px 10px", borderRadius: "6px", border: "1px solid var(--border)", background: "transparent", color: "var(--text-secondary)", fontSize: "11px", cursor: "pointer" } }, "Clear")
-          ),
-          h("div", { style: { background: "var(--surface-elevated, #1a1a2e)", borderRadius: "12px", overflow: "hidden" } },
-            h(NotificationLog, { notifications: notifications })
+          activeTab === "logs" && h("div", null,
+            h("div", { className: "flex justify-between items-center mb-2" },
+              h("h4", { className: "text-xs font-semibold m-0" }, "Notifications (" + notifications.length + ")"),
+              h("button", { onClick: function () { apiPost("/notifications/clear").then(fetchStatus); }, className: "px-2 py-1 rounded border border-[var(--border)] text-[10px] text-[var(--text-secondary)] cursor-pointer", background: "transparent" }, "Clear")
+            ),
+            h("div", { className: "rounded-xl overflow-hidden", style: { background: "var(--surface-elevated, #1a1a2e)" } },
+              h(NotifLog, { notifications: notifications })
+            )
           )
         );
       }
 
-      return h("div", null,
-        // Quick Stats
-        h("div", { style: { display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "8px", marginBottom: "16px" } },
-          h(StatCard, { value: providerCount, label: "Providers", color: "#3b82f6" }),
-          h(StatCard, { value: availableCount, label: "Available", color: "#22c55e" }),
-          h(StatCard, { value: activeProvider || "—", label: "Active", color: "#f59e0b" }),
-          h(StatCard, { value: localStatus.running ? "OK" : "Off", label: "Local LLM", color: localStatus.running ? "#22c55e" : "#6b7280" })
-        ),
+      // ─── Register ──────────────────────────────────────────────────────────────
 
-        // Tabs
-        h("div", { style: { display: "flex", gap: "4px", marginBottom: "16px", borderBottom: "1px solid var(--border)" } },
-          tabs.map(function (tab) {
-            return h("button", {
-              key: tab.id,
-              onClick: function () { setActiveTab(tab.id); },
-              style: {
-                padding: "8px 16px", border: "none",
-                background: activeTab === tab.id ? "var(--surface-elevated, #1a1a2e)" : "transparent",
-                color: activeTab === tab.id ? "var(--text-primary)" : "var(--text-secondary)",
-                fontSize: "13px", fontWeight: activeTab === tab.id ? 600 : 400,
-                cursor: "pointer", borderRadius: "6px 6px 0 0",
-                borderBottom: activeTab === tab.id ? "2px solid #3b82f6" : "2px solid transparent",
-              }
-            }, tab.label);
-          })
-        ),
+      if (window.__HERMES_PLUGINS__ && typeof window.__HERMES_PLUGINS__.register === "function") {
+        window.__HERMES_PLUGINS__.register("provider-router", ProviderRouterDashboard);
+        console.log("[provider-router] Registered successfully!");
+      } else {
+        console.error("[provider-router] Cannot register — __HERMES_PLUGINS__ not available");
+      }
 
-        // Tab Content
-        activeTab === "dashboard" ? renderDashboard() : null,
-        activeTab === "settings" ? renderSettings() : null,
-        activeTab === "logs" ? renderLogs() : null
-      );
+    } catch (err) {
+      console.error("[provider-router] Init error:", err);
     }
-
-    // ─── Register ──────────────────────────────────────────────────────────────
-
-    if (window.__HERMES_PLUGINS__ && typeof window.__HERMES_PLUGINS__.register === "function") {
-      window.__HERMES_PLUGINS__.register("provider-router", ProviderRouterDashboard);
-      console.log("[provider-router] Plugin registered successfully!");
-    } else {
-      console.error("[provider-router] __HERMES_PLUGINS__ not available!");
-    }
-
-  } catch (err) {
-    console.error("[provider-router] Fatal error:", err);
   }
+
+  // Start — wait for SDK
+  initPlugin();
 })();
