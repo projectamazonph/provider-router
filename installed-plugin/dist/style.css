@@ -1,0 +1,7 @@
+/* Provider Router — Dashboard Plugin Styles */
+.pr-provider-card {
+  transition: border-color 0.2s ease;
+}
+.pr-provider-card:hover {
+  border-color: rgba(59, 130, 246, 0.3);
+}

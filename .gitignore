@@ -1,0 +1,46 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+eggs/
+*.egg
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Hermes runtime (don't commit secrets or state)
+*.lock
+.env
+auth.json
+cost-snapshots/
+provider-router/notifications.log
+provider-router/status_snapshot.json
+provider-router/pending_notifications/
+provider-router/run_check.sh
+
+# Models (large binaries)
+*.gguf
+*.bin
+*.safetensors
+models/
+
+# Node
+node_modules/

@@ -1,0 +1,14 @@
+{
+  "name": "provider-router",
+  "label": "Provider Router",
+  "description": "Monitor token usage, manage provider rotation, and control local LLM fallback",
+  "icon": "Router",
+  "version": "1.0.0",
+  "tab": {
+    "path": "/providers",
+    "position": "after:skills"
+  },
+  "entry": "dist/index.js",
+  "css": "dist/style.css",
+  "api": "plugin_api.py"
+}
